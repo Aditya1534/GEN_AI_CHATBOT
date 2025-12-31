@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+scikit-learn
+joblib
+matplotlib
+shap
+sqlalchemy
+pymysql
+psycopg2-binary
+openai
