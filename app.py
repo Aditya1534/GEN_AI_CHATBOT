@@ -232,10 +232,49 @@ if df_raw is not None:
         # =================================================
         # DOWNLOADS
         # =================================================
-        st.subheader("📥 Actionable Lists")
-        st.download_button("⬇ Full Results",
-                           results.to_csv(index=False),
-                           "full_predictions.csv")
+       # =================================================
+# DOWNLOADS – ACTIONABLE LISTS (ENHANCED)
+# =================================================
+st.subheader("📥 Actionable Lists")
+
+# Full dataset
+st.download_button(
+    "⬇ Download Full Results",
+    results.to_csv(index=False),
+    "full_predictions.csv"
+)
+
+# Split by risk category
+safe_df = results[results["Churn_Risk"] == "Safe"]
+low_risk_df = results[results["Churn_Risk"] == "Low Risk"]
+high_risk_df = results[results["Churn_Risk"] == "High Risk"]
+
+c1, c2, c3 = st.columns(3)
+
+with c1:
+    st.metric("Safe Customers", len(safe_df))
+    st.download_button(
+        "⬇ Safe Customers",
+        safe_df.to_csv(index=False),
+        "safe_customers.csv"
+    )
+
+with c2:
+    st.metric("Low Risk Customers", len(low_risk_df))
+    st.download_button(
+        "⬇ Low Risk Customers",
+        low_risk_df.to_csv(index=False),
+        "low_risk_customers.csv"
+    )
+
+with c3:
+    st.metric("High Risk Customers", len(high_risk_df))
+    st.download_button(
+        "⬇ High Risk Customers",
+        high_risk_df.to_csv(index=False),
+        "high_risk_customers.csv"
+    )
+
 
         # =================================================
         # EXECUTIVE SUMMARY PDF
