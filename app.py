@@ -9,7 +9,7 @@ st.set_page_config(
 )
 
 # =================================================
-# BACKGROUND IMAGE – LIGHT / MEDIUM SHADE
+# BACKGROUND IMAGE (YOUR ORIGINAL – UNCHANGED)
 # =================================================
 import base64
 import os
@@ -25,7 +25,6 @@ def set_bg(image_file):
     st.markdown(
         f"""
         <style>
-        /* MAIN BACKGROUND */
         .stApp {{
             background-image: url("data:image/jpeg;base64,{encoded}");
             background-size: cover;
@@ -33,40 +32,16 @@ def set_bg(image_file):
             background-attachment: fixed;
         }}
 
-        /* LIGHT OVERLAY (THIS SOFTENS THE IMAGE) */
-        .stApp::before {{
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255, 255, 255, 0.55);
-            z-index: -1;
-        }}
-
-        /* CONTENT CONTAINER */
         .block-container {{
-            background: rgba(255, 255, 255, 0.88);
+            background-color: rgba(0, 0, 0, 0.55);
             padding: 2rem;
-            border-radius: 16px;
-        }}
-
-        /* HEADINGS */
-        h1, h2, h3 {{
-            color: #0f172a;
-        }}
-
-        /* SIDEBAR */
-        section[data-testid="stSidebar"] {{
-            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
         }}
         </style>
         """,
         unsafe_allow_html=True
     )
 
-# ✅ IMAGE NAME
 set_bg("enterprise.jpeg")
 
 # ================= IMPORTS =================
@@ -83,7 +58,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 warnings.filterwarnings("ignore")
 
 # =================================================
-# SIDEBAR – GENAI CONFIG
+# SIDEBAR – GENAI CONFIG + COPILOT
 # =================================================
 st.sidebar.title("🤖 GenAI Configuration")
 
@@ -99,6 +74,14 @@ if genai_enabled:
 else:
     st.sidebar.warning("GenAI Disabled")
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("💬 GenAI BI Copilot")
+
+sidebar_question = st.sidebar.text_area(
+    "Ask any business question about this dataset",
+    height=120
+)
+
 # =================================================
 # HEADER
 # =================================================
@@ -109,7 +92,7 @@ st.write(
 )
 
 # =================================================
-# LOAD MODEL
+# LOAD MODEL & METADATA
 # =================================================
 @st.cache_resource
 def load_artifacts():
@@ -163,23 +146,35 @@ elif data_source == "Connect SQL Database":
 # =================================================
 if df_raw is not None:
     try:
+        df_raw.columns = df_raw.columns.str.strip()
+
         st.subheader("📄 Dataset Overview")
         st.write(f"Total Records: **{len(df_raw)}**")
         st.dataframe(df_raw, use_container_width=True)
 
         df = df_raw.copy()
 
+        # Remove target column
         for col in ["churn", "Churn", "Exited", "is_churn", "Churn_Risk"]:
             if col in df.columns:
                 df.drop(columns=[col], inplace=True)
 
+        # Type fixing
         for col in df.columns:
             if df[col].dtype == "object":
-                df[col] = pd.to_numeric(df[col], errors="ignore")
+                converted = pd.to_numeric(df[col], errors="coerce")
+                if converted.notnull().sum() > 0:
+                    df[col] = converted
 
-        df = pd.get_dummies(df, drop_first=True)
+        # Encoding
+        cat_cols = df.select_dtypes(include=["object", "category"]).columns
+        df = pd.get_dummies(df, columns=cat_cols, drop_first=True)
+        df.fillna(0, inplace=True)
         df = df.reindex(columns=columns, fill_value=0)
 
+        # =================================================
+        # PREDICTION
+        # =================================================
         churn_prob = model.predict_proba(df)[:, 1]
 
         results = df_raw.copy()
@@ -189,25 +184,109 @@ if df_raw is not None:
             np.where(churn_prob >= 0.4, "Low Risk", "Safe")
         )
 
+        results = results.astype(str)
+
         # =================================================
-        # DASHBOARD
+        # EXECUTIVE DASHBOARD
         # =================================================
         st.subheader("📊 Executive Risk Summary")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total", len(results))
-        c2.metric("Safe", (results["Churn_Risk"] == "Safe").sum())
-        c3.metric("Low Risk", (results["Churn_Risk"] == "Low Risk").sum())
-        c4.metric("High Risk", (results["Churn_Risk"] == "High Risk").sum())
+        c1.metric("Total Customers", len(results))
+        c2.metric("Safe", (results["Churn_Risk"]=="Safe").sum())
+        c3.metric("Low Risk", (results["Churn_Risk"]=="Low Risk").sum())
+        c4.metric("High Risk", (results["Churn_Risk"]=="High Risk").sum())
 
         # =================================================
-        # DOWNLOAD
+        # CUSTOMER SEARCH
         # =================================================
-        st.subheader("📥 Downloads")
-        st.download_button(
-            "⬇ Full Results",
-            results.to_csv(index=False),
-            "full_predictions.csv"
-        )
+        st.subheader("🔎 Customer Risk Lookup")
+
+        id_col = st.selectbox("Select Customer Identifier", results.columns)
+        search_val = st.text_input("Enter Customer ID").strip()
+
+        if search_val:
+            match = results[results[id_col].str.strip() == search_val]
+
+            if match.empty:
+                st.warning("No customer found")
+            else:
+                st.success("Customer located")
+                st.dataframe(match, use_container_width=True)
+
+                if genai_enabled:
+                    st.markdown("### 🧠 AI Customer Explanation")
+                    prompt = f"""
+                    Explain this customer's churn risk.
+                    Customer data: {match.iloc[0].to_dict()}
+                    Give business reasoning and action.
+                    """
+
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role":"user","content":prompt}],
+                        temperature=0.3
+                    )
+
+                    st.info(response.choices[0].message.content)
+
+        # =================================================
+        # DOWNLOADS
+        # =================================================
+        st.subheader("📥 Actionable Lists")
+        st.download_button("⬇ Full Results",
+                           results.to_csv(index=False),
+                           "full_predictions.csv")
+
+        # =================================================
+        # EXECUTIVE SUMMARY PDF
+        # =================================================
+        if genai_enabled and st.button("📄 Generate Executive Summary PDF"):
+            pdf_path = "Executive_Summary.pdf"
+            doc = SimpleDocTemplate(pdf_path)
+            styles = getSampleStyleSheet()
+
+            summary_prompt = f"""
+            Create an executive churn summary.
+            Total customers: {len(results)}
+            High Risk: {(results['Churn_Risk']=='High Risk').sum()}
+            Low Risk: {(results['Churn_Risk']=='Low Risk').sum()}
+            Safe: {(results['Churn_Risk']=='Safe').sum()}
+            """
+
+            summary = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role":"user","content":summary_prompt}],
+                temperature=0.3
+            ).choices[0].message.content
+
+            doc.build([Paragraph(summary, styles["Normal"])])
+
+            with open(pdf_path, "rb") as f:
+                st.download_button("⬇ Download Executive Summary",
+                                   f,
+                                   file_name="Executive_Summary.pdf")
+
+        # =================================================
+        # GENAI BI COPILOT (MAIN PAGE)
+        # =================================================
+        st.subheader("💬 GenAI BI Copilot")
+
+        question = st.text_input("Ask any business question about this dataset")
+
+        if genai_enabled and question:
+            prompt = f"""
+            You are a senior enterprise BI analyst.
+            Dataset columns: {list(results.columns)}
+            Question: {question}
+            """
+
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role":"user","content":prompt}],
+                temperature=0.3
+            )
+
+            st.success(response.choices[0].message.content)
 
     except Exception as e:
         st.error("Enterprise processing error")
