@@ -18,24 +18,21 @@ def set_bg(image_file):
     if not os.path.exists(image_file):
         st.warning(f"Background image not found: {image_file}")
         return
-
     with open(image_file, "rb") as f:
         encoded = base64.b64encode(f.read()).decode()
-
     st.markdown(
         f"""
         <style>
         .stApp {{
             background-image: url("data:image/jpeg;base64,{encoded}");
             background-size: cover;
-            background-position: center;
             background-attachment: fixed;
+            background-position: center;
         }}
-
         .block-container {{
-            background-color: rgba(0, 0, 0, 0.55);
+            background-color: rgba(0,0,0,0.60);
             padding: 2rem;
-            border-radius: 12px;
+            border-radius: 14px;
         }}
         </style>
         """,
@@ -44,9 +41,7 @@ def set_bg(image_file):
 
 set_bg("enterprise.jpeg")
 
-# =================================================
-# IMPORTS
-# =================================================
+# ================= IMPORTS =================
 import pandas as pd
 import joblib
 import numpy as np
@@ -60,7 +55,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 warnings.filterwarnings("ignore")
 
 # =================================================
-# SIDEBAR – GENAI CONFIG
+# SIDEBAR – GENAI CONFIG + COPILOT
 # =================================================
 st.sidebar.title("🤖 GenAI Configuration")
 
@@ -70,23 +65,32 @@ openai_api_key = st.sidebar.text_input(
 )
 
 genai_enabled = bool(openai_api_key)
+
 if genai_enabled:
     openai.api_key = openai_api_key
     st.sidebar.success("GenAI Enabled")
 else:
-    st.sidebar.warning("GenAI Disabled")
+    st.sidebar.warning("GenAI Disabled (API Key Required)")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("💬 GenAI BI Copilot")
+
+sidebar_question = st.sidebar.text_area(
+    "Ask any business question about the dataset",
+    height=130
+)
 
 # =================================================
 # HEADER
 # =================================================
 st.title("🏦 Enterprise GenAI Business Intelligence Platform")
 st.write(
-    "Future churn risk prediction, explainability, "
+    "Future churn risk prediction, executive explainability, "
     "SQL ingestion, customer search & AI-powered BI insights."
 )
 
 # =================================================
-# LOAD MODEL
+# LOAD MODEL & METADATA
 # =================================================
 @st.cache_resource
 def load_artifacts():
@@ -110,7 +114,10 @@ df_raw = None
 # CSV UPLOAD
 # =================================================
 if data_source == "Upload CSV":
-    uploaded_file = st.file_uploader("📂 Upload Customer Dataset", type=["csv"])
+    uploaded_file = st.file_uploader(
+        "📂 Upload Customer Dataset",
+        type=["csv"]
+    )
     if uploaded_file:
         df_raw = pd.read_csv(uploaded_file)
 
@@ -122,21 +129,24 @@ elif data_source == "Connect SQL Database":
 
     db_type = st.selectbox("Database Type", ["MySQL", "PostgreSQL"])
     host = st.text_input("Host")
-    port = st.text_input("Port", "3306" if db_type == "MySQL" else "5432")
+    port = st.text_input(
+        "Port",
+        "3306" if db_type == "MySQL" else "5432"
+    )
     db = st.text_input("Database Name")
     user = st.text_input("Username")
     password = st.text_input("Password", type="password")
     table = st.text_input("Table Name")
 
     if st.button("Connect & Load"):
-        if all([host, db, user, password, table]):
-            engine = create_engine(
-                f"{'mysql+pymysql' if db_type=='MySQL' else 'postgresql'}://{user}:{password}@{host}:{port}/{db}"
-            )
-            df_raw = pd.read_sql(f"SELECT * FROM {table}", engine)
-            st.success("Database connected successfully")
-        else:
-            st.error("Please fill all database fields")
+        engine = create_engine(
+            f"{'mysql+pymysql' if db_type=='MySQL' else 'postgresql'}://{user}:{password}@{host}:{port}/{db}"
+        )
+        df_raw = pd.read_sql(
+            f"SELECT * FROM {table}",
+            engine
+        )
+        st.success("Database connected successfully")
 
 # =================================================
 # PROCESS DATA
@@ -151,21 +161,26 @@ if df_raw is not None:
 
         df = df_raw.copy()
 
-        # Remove target column if present
+        # ---------------------------------------------
+        # REMOVE TARGET IF EXISTS
+        # ---------------------------------------------
         for col in ["churn", "Churn", "Exited", "is_churn", "Churn_Risk"]:
             if col in df.columns:
                 df.drop(columns=[col], inplace=True)
 
-        # Convert numeric strings
+        # ---------------------------------------------
+        # TYPE FIXING
+        # ---------------------------------------------
         for col in df.columns:
             if df[col].dtype == "object":
-                converted = pd.to_numeric(df[col], errors="coerce")
-                if converted.notnull().sum() > 0:
-                    df[col] = converted
+                num = pd.to_numeric(df[col], errors="coerce")
+                if num.notnull().sum() > 0:
+                    df[col] = num
 
-        # Encode categorical
-        cat_cols = df.select_dtypes(include=["object", "category"]).columns
-        df = pd.get_dummies(df, columns=cat_cols, drop_first=True)
+        # ---------------------------------------------
+        # ENCODING + ALIGNMENT
+        # ---------------------------------------------
+        df = pd.get_dummies(df, drop_first=True)
         df.fillna(0, inplace=True)
         df = df.reindex(columns=columns, fill_value=0)
 
@@ -184,25 +199,32 @@ if df_raw is not None:
         results = results.astype(str)
 
         # =================================================
-        # DASHBOARD
+        # EXECUTIVE DASHBOARD
         # =================================================
         st.subheader("📊 Executive Risk Summary")
+
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Customers", len(results))
-        c2.metric("Safe", (results["Churn_Risk"] == "Safe").sum())
-        c3.metric("Low Risk", (results["Churn_Risk"] == "Low Risk").sum())
-        c4.metric("High Risk", (results["Churn_Risk"] == "High Risk").sum())
+        c2.metric("Safe", (results["Churn_Risk"]=="Safe").sum())
+        c3.metric("Low Risk", (results["Churn_Risk"]=="Low Risk").sum())
+        c4.metric("High Risk", (results["Churn_Risk"]=="High Risk").sum())
 
         # =================================================
         # CUSTOMER SEARCH
         # =================================================
         st.subheader("🔎 Customer Risk Lookup")
 
-        id_col = st.selectbox("Select Customer Identifier", results.columns)
+        id_col = st.selectbox(
+            "Select Customer Identifier",
+            results.columns
+        )
+
         search_val = st.text_input("Enter Customer ID").strip()
 
         if search_val:
-            match = results[results[id_col].str.strip() == search_val]
+            match = results[
+                results[id_col].str.strip() == search_val
+            ]
 
             if match.empty:
                 st.warning("No customer found")
@@ -213,50 +235,49 @@ if df_raw is not None:
                 if genai_enabled:
                     st.markdown("### 🧠 AI Customer Explanation")
                     prompt = f"""
-                    Explain this customer's churn risk.
+                    Explain the churn risk in business terms.
                     Customer data: {match.iloc[0].to_dict()}
-                    Give business reasoning and action.
+                    Include reason, impact and recommended action.
                     """
-
                     response = openai.ChatCompletion.create(
                         model="gpt-3.5-turbo",
-                        messages=[{"role": "user", "content": prompt}],
+                        messages=[{"role":"user","content":prompt}],
                         temperature=0.3
                     )
-
                     st.info(response.choices[0].message.content)
 
         # =================================================
-        # DOWNLOADS
+        # DOWNLOADS – ACTIONABLE LISTS
         # =================================================
         st.subheader("📥 Actionable Lists")
 
+        safe_df = results[results["Churn_Risk"]=="Safe"]
+        low_df = results[results["Churn_Risk"]=="Low Risk"]
+        high_df = results[results["Churn_Risk"]=="High Risk"]
+
         st.download_button(
-            "⬇ Download Full Results",
+            "⬇ Full Results",
             results.to_csv(index=False),
             "full_predictions.csv"
         )
-
-        safe_df = results[results["Churn_Risk"] == "Safe"]
-        low_df = results[results["Churn_Risk"] == "Low Risk"]
-        high_df = results[results["Churn_Risk"] == "High Risk"]
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.metric("Safe Customers", len(safe_df))
-            st.download_button("⬇ Safe", safe_df.to_csv(index=False), "safe.csv")
-
-        with c2:
-            st.metric("Low Risk Customers", len(low_df))
-            st.download_button("⬇ Low Risk", low_df.to_csv(index=False), "low_risk.csv")
-
-        with c3:
-            st.metric("High Risk Customers", len(high_df))
-            st.download_button("⬇ High Risk", high_df.to_csv(index=False), "high_risk.csv")
+        st.download_button(
+            "⬇ Safe Customers",
+            safe_df.to_csv(index=False),
+            "safe_customers.csv"
+        )
+        st.download_button(
+            "⬇ Low Risk Customers",
+            low_df.to_csv(index=False),
+            "low_risk_customers.csv"
+        )
+        st.download_button(
+            "⬇ High Risk Customers",
+            high_df.to_csv(index=False),
+            "high_risk_customers.csv"
+        )
 
         # =================================================
-        # EXECUTIVE PDF
+        # EXECUTIVE SUMMARY PDF
         # =================================================
         if genai_enabled and st.button("📄 Generate Executive Summary PDF"):
             pdf_path = "Executive_Summary.pdf"
@@ -273,7 +294,7 @@ if df_raw is not None:
 
             summary = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": summary_prompt}],
+                messages=[{"role":"user","content":summary_prompt}],
                 temperature=0.3
             ).choices[0].message.content
 
@@ -287,25 +308,22 @@ if df_raw is not None:
                 )
 
         # =================================================
-        # GENAI BI COPILOT
+        # SIDEBAR COPILOT RESPONSE
         # =================================================
-        st.subheader("💬 GenAI BI Copilot")
-        question = st.text_input("Ask any business question")
-
-        if genai_enabled and question:
+        if genai_enabled and sidebar_question:
             prompt = f"""
             You are a senior enterprise BI analyst.
             Dataset columns: {list(results.columns)}
-            Question: {question}
+            Risk distribution:
+            Safe={len(safe_df)}, Low={len(low_df)}, High={len(high_df)}
+            Question: {sidebar_question}
             """
-
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role":"user","content":prompt}],
                 temperature=0.3
             )
-
-            st.success(response.choices[0].message.content)
+            st.sidebar.success(response.choices[0].message.content)
 
     except Exception as e:
         st.error("Enterprise processing error")
