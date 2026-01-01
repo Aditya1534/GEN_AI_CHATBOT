@@ -100,7 +100,7 @@ if df_raw is not None:
                 df.drop(columns=[col], inplace=True)
 
         # ---------------------------------------------
-        # TYPE FIXING
+        # TYPE FIXING (ML PIPELINE ONLY)
         # ---------------------------------------------
         for col in df.columns:
             if df[col].dtype == "object":
@@ -135,16 +135,19 @@ if df_raw is not None:
         results["Churn_Probability"] = churn_prob
 
         # =================================================
-        # ENTERPRISE RISK SEGMENTATION
+        # RISK SEGMENTATION (FIXED ORDER)
         # =================================================
-        conditions = [
-            churn_prob >= 0.7,
-            (churn_prob >= 0.4) & (churn_prob < 0.7),
-            churn_prob < 0.4
-        ]
-        choices = ["Safe", "Low Risk", "High Risk"]
+        results["Churn_Risk"] = np.where(
+            churn_prob >= 0.7, "High Risk",
+            np.where(churn_prob >= 0.4, "Low Risk", "Safe")
+        )
 
-        results["Churn_Risk"] = np.select(conditions, choices)
+        # =================================================
+        # 🔐 UI SAFETY FIX (CRITICAL)
+        # Convert ALL columns to string for Streamlit widgets
+        # =================================================
+        for col in results.columns:
+            results[col] = results[col].astype(str)
 
         # =================================================
         # SUMMARY DASHBOARD
@@ -158,15 +161,22 @@ if df_raw is not None:
         c4.metric("High Risk", (results["Churn_Risk"] == "High Risk").sum())
 
         # =================================================
-        # CUSTOMER SEARCH
+        # CUSTOMER SEARCH (FIXED)
         # =================================================
         st.subheader("🔎 Customer Risk Lookup")
 
-        id_col = st.selectbox("Select Customer Identifier", results.columns)
-        search_val = st.text_input("Enter Customer ID")
+        id_col = st.selectbox(
+            "Select Customer Identifier",
+            options=[str(c) for c in results.columns]
+        )
+
+        search_val = st.text_input("Enter Customer ID").strip()
 
         if search_val:
-            match = results[results[id_col].astype(str) == search_val]
+            match = results[
+                results[id_col].astype(str).str.strip() == search_val
+            ]
+
             if match.empty:
                 st.warning("No customer found")
             else:
@@ -194,6 +204,7 @@ if df_raw is not None:
 
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(df)
+
         if isinstance(shap_values, list):
             shap_values = shap_values[1]
 
@@ -202,7 +213,7 @@ if df_raw is not None:
         st.pyplot(fig)
 
         # =================================================
-        # GENAI BI COPILOT (OPTIONAL)
+        # GENAI BI COPILOT
         # =================================================
         st.subheader("💬 GenAI BI Copilot")
 
