@@ -9,26 +9,42 @@ st.set_page_config(
 )
 
 # =================================================
-# BACKGROUND IMAGE
+# BACKGROUND IMAGE (SAFE + FIXED)
 # =================================================
 import base64
+import os
+
 def set_bg(image_file):
+    if not os.path.exists(image_file):
+        st.warning(f"Background image not found: {image_file}")
+        return
+
     with open(image_file, "rb") as f:
         encoded = base64.b64encode(f.read()).decode()
+
     st.markdown(
         f"""
         <style>
         .stApp {{
-            background-image: url(data:image/jpg;base64,{encoded});
+            background-image: url("data:image/jpeg;base64,{encoded}");
             background-size: cover;
+            background-position: center;
             background-attachment: fixed;
+        }}
+
+        /* Optional readability overlay */
+        .block-container {{
+            background-color: rgba(0, 0, 0, 0.55);
+            padding: 2rem;
+            border-radius: 12px;
         }}
         </style>
         """,
         unsafe_allow_html=True
     )
 
-set_bg("enterprise.jpg")
+# ✅ FIXED IMAGE NAME
+set_bg("enterprise.jpeg")
 
 # ================= IMPORTS =================
 import pandas as pd
@@ -37,8 +53,6 @@ import numpy as np
 import warnings
 from sqlalchemy import create_engine
 import openai
-from reportlab.platypus import SimpleDocTemplate, Paragraph
-from reportlab.lib.styles import getSampleStyleSheet
 
 warnings.filterwarnings("ignore")
 
@@ -137,19 +151,21 @@ if df_raw is not None:
 
         df = df_raw.copy()
 
+        # Remove target column if exists
         for col in ["churn", "Churn", "Exited", "is_churn", "Churn_Risk"]:
             if col in df.columns:
                 df.drop(columns=[col], inplace=True)
 
+        # Convert numeric strings
         for col in df.columns:
             if df[col].dtype == "object":
-                num = pd.to_numeric(df[col], errors="coerce")
-                if num.notnull().sum() > 0:
-                    df[col] = num
+                df[col] = pd.to_numeric(df[col], errors="ignore")
 
+        # One-hot encode
         df = pd.get_dummies(df, drop_first=True)
         df = df.reindex(columns=columns, fill_value=0)
 
+        # Predict
         churn_prob = model.predict_proba(df)[:, 1]
 
         results = df_raw.copy()
@@ -159,14 +175,12 @@ if df_raw is not None:
             np.where(churn_prob >= 0.4, "Low Risk", "Safe")
         )
 
-        results = results.astype(str)
-
         # =================================================
         # DASHBOARD
         # =================================================
         st.subheader("📊 Executive Risk Summary")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total", len(results))
+        c1.metric("Total Customers", len(results))
         c2.metric("Safe", (results["Churn_Risk"] == "Safe").sum())
         c3.metric("Low Risk", (results["Churn_Risk"] == "Low Risk").sum())
         c4.metric("High Risk", (results["Churn_Risk"] == "High Risk").sum())
@@ -176,29 +190,39 @@ if df_raw is not None:
         # =================================================
         st.subheader("📥 Actionable Lists")
 
-        st.download_button("⬇ High Risk", results[results["Churn_Risk"]=="High Risk"].to_csv(index=False), "high_risk.csv")
-        st.download_button("⬇ Low Risk", results[results["Churn_Risk"]=="Low Risk"].to_csv(index=False), "low_risk.csv")
-        st.download_button("⬇ Safe", results[results["Churn_Risk"]=="Safe"].to_csv(index=False), "safe.csv")
-        st.download_button("⬇ Full Results", results.to_csv(index=False), "full_predictions.csv")
+        st.download_button("⬇ High Risk Customers",
+                           results[results["Churn_Risk"]=="High Risk"].to_csv(index=False),
+                           "high_risk.csv")
+
+        st.download_button("⬇ Low Risk Customers",
+                           results[results["Churn_Risk"]=="Low Risk"].to_csv(index=False),
+                           "low_risk.csv")
+
+        st.download_button("⬇ Safe Customers",
+                           results[results["Churn_Risk"]=="Safe"].to_csv(index=False),
+                           "safe.csv")
+
+        st.download_button("⬇ Full Prediction File",
+                           results.to_csv(index=False),
+                           "full_predictions.csv")
 
         # =================================================
-        # SIDEBAR GENAI ANSWER
+        # GENAI INSIGHTS
         # =================================================
         if genai_enabled and sidebar_question:
             context = {
-                "columns": list(results.columns),
                 "total": len(results),
-                "high_risk": (results["Churn_Risk"]=="High Risk").sum(),
-                "low_risk": (results["Churn_Risk"]=="Low Risk").sum(),
-                "safe": (results["Churn_Risk"]=="Safe").sum(),
-                "sample": results.head(5).to_dict()
+                "high_risk": int((results["Churn_Risk"]=="High Risk").sum()),
+                "low_risk": int((results["Churn_Risk"]=="Low Risk").sum()),
+                "safe": int((results["Churn_Risk"]=="Safe").sum()),
+                "columns": list(results.columns)
             }
 
             prompt = f"""
-            You are an enterprise BI analyst.
-            Dataset context: {context}
-            Question: {sidebar_question}
-            Answer in business insights.
+            You are a senior enterprise BI analyst.
+            Dataset summary: {context}
+            Business Question: {sidebar_question}
+            Provide clear executive insights.
             """
 
             response = openai.ChatCompletion.create(
@@ -214,4 +238,4 @@ if df_raw is not None:
         st.code(str(e))
 
 else:
-    st.info("Upload CSV or connect SQL database to begin analysis")
+    st.info("Upload CSV or connect SQL database to begin analysis.")
