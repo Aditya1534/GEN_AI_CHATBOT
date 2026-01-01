@@ -9,3 +9,7 @@ sqlalchemy
 pymysql
 psycopg2-binary
 openai
+lightgbm==4.1.0
+xgboost==2.0.3
+catboost==1.2.5
+
