@@ -28,7 +28,7 @@ def set_bg(image_file):
         unsafe_allow_html=True
     )
 
-set_bg("bg.jpg")
+set_bg("enterprise.jpg")
 
 # ================= IMPORTS =================
 import pandas as pd
