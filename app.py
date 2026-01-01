@@ -9,7 +9,7 @@ st.set_page_config(
 )
 
 # =================================================
-# BACKGROUND IMAGE (SAFE + FIXED)
+# BACKGROUND IMAGE – LIGHT / MEDIUM SHADE
 # =================================================
 import base64
 import os
@@ -25,6 +25,7 @@ def set_bg(image_file):
     st.markdown(
         f"""
         <style>
+        /* MAIN BACKGROUND */
         .stApp {{
             background-image: url("data:image/jpeg;base64,{encoded}");
             background-size: cover;
@@ -32,18 +33,40 @@ def set_bg(image_file):
             background-attachment: fixed;
         }}
 
-        /* Optional readability overlay */
+        /* LIGHT OVERLAY (THIS SOFTENS THE IMAGE) */
+        .stApp::before {{
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.55);
+            z-index: -1;
+        }}
+
+        /* CONTENT CONTAINER */
         .block-container {{
-            background-color: rgba(0, 0, 0, 0.55);
+            background: rgba(255, 255, 255, 0.88);
             padding: 2rem;
-            border-radius: 12px;
+            border-radius: 16px;
+        }}
+
+        /* HEADINGS */
+        h1, h2, h3 {{
+            color: #0f172a;
+        }}
+
+        /* SIDEBAR */
+        section[data-testid="stSidebar"] {{
+            background: rgba(255, 255, 255, 0.95);
         }}
         </style>
         """,
         unsafe_allow_html=True
     )
 
-# ✅ FIXED IMAGE NAME
+# ✅ IMAGE NAME
 set_bg("enterprise.jpeg")
 
 # ================= IMPORTS =================
@@ -54,10 +77,13 @@ import warnings
 from sqlalchemy import create_engine
 import openai
 
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+
 warnings.filterwarnings("ignore")
 
 # =================================================
-# SIDEBAR – GENAI CONFIG + COPILOT
+# SIDEBAR – GENAI CONFIG
 # =================================================
 st.sidebar.title("🤖 GenAI Configuration")
 
@@ -72,14 +98,6 @@ if genai_enabled:
     st.sidebar.success("GenAI Enabled")
 else:
     st.sidebar.warning("GenAI Disabled")
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("💬 GenAI BI Copilot")
-
-sidebar_question = st.sidebar.text_area(
-    "Ask any business question about this dataset",
-    height=120
-)
 
 # =================================================
 # HEADER
@@ -151,21 +169,17 @@ if df_raw is not None:
 
         df = df_raw.copy()
 
-        # Remove target column if exists
         for col in ["churn", "Churn", "Exited", "is_churn", "Churn_Risk"]:
             if col in df.columns:
                 df.drop(columns=[col], inplace=True)
 
-        # Convert numeric strings
         for col in df.columns:
             if df[col].dtype == "object":
                 df[col] = pd.to_numeric(df[col], errors="ignore")
 
-        # One-hot encode
         df = pd.get_dummies(df, drop_first=True)
         df = df.reindex(columns=columns, fill_value=0)
 
-        # Predict
         churn_prob = model.predict_proba(df)[:, 1]
 
         results = df_raw.copy()
@@ -180,58 +194,20 @@ if df_raw is not None:
         # =================================================
         st.subheader("📊 Executive Risk Summary")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Customers", len(results))
+        c1.metric("Total", len(results))
         c2.metric("Safe", (results["Churn_Risk"] == "Safe").sum())
         c3.metric("Low Risk", (results["Churn_Risk"] == "Low Risk").sum())
         c4.metric("High Risk", (results["Churn_Risk"] == "High Risk").sum())
 
         # =================================================
-        # DOWNLOADS
+        # DOWNLOAD
         # =================================================
-        st.subheader("📥 Actionable Lists")
-
-        st.download_button("⬇ High Risk Customers",
-                           results[results["Churn_Risk"]=="High Risk"].to_csv(index=False),
-                           "high_risk.csv")
-
-        st.download_button("⬇ Low Risk Customers",
-                           results[results["Churn_Risk"]=="Low Risk"].to_csv(index=False),
-                           "low_risk.csv")
-
-        st.download_button("⬇ Safe Customers",
-                           results[results["Churn_Risk"]=="Safe"].to_csv(index=False),
-                           "safe.csv")
-
-        st.download_button("⬇ Full Prediction File",
-                           results.to_csv(index=False),
-                           "full_predictions.csv")
-
-        # =================================================
-        # GENAI INSIGHTS
-        # =================================================
-        if genai_enabled and sidebar_question:
-            context = {
-                "total": len(results),
-                "high_risk": int((results["Churn_Risk"]=="High Risk").sum()),
-                "low_risk": int((results["Churn_Risk"]=="Low Risk").sum()),
-                "safe": int((results["Churn_Risk"]=="Safe").sum()),
-                "columns": list(results.columns)
-            }
-
-            prompt = f"""
-            You are a senior enterprise BI analyst.
-            Dataset summary: {context}
-            Business Question: {sidebar_question}
-            Provide clear executive insights.
-            """
-
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role":"user","content":prompt}],
-                temperature=0.3
-            )
-
-            st.sidebar.success(response.choices[0].message.content)
+        st.subheader("📥 Downloads")
+        st.download_button(
+            "⬇ Full Results",
+            results.to_csv(index=False),
+            "full_predictions.csv"
+        )
 
     except Exception as e:
         st.error("Enterprise processing error")
