@@ -6,6 +6,7 @@ st.set_page_config(
     layout="wide"
 )
 
+# ================= IMPORTS =================
 import pandas as pd
 import joblib
 import shap
@@ -15,7 +16,28 @@ import warnings
 from sqlalchemy import create_engine
 import openai
 
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+
 warnings.filterwarnings("ignore")
+
+# =================================================
+# SIDEBAR – GENAI CONFIG (TOP RIGHT)
+# =================================================
+st.sidebar.title("🤖 GenAI Configuration")
+
+openai_api_key = st.sidebar.text_input(
+    "Enter OpenAI API Key",
+    type="password",
+    help="Required to enable GenAI features"
+)
+
+genai_enabled = bool(openai_api_key)
+if genai_enabled:
+    openai.api_key = openai_api_key
+    st.sidebar.success("GenAI Enabled")
+else:
+    st.sidebar.warning("GenAI Disabled (API key required)")
 
 # =================================================
 # HEADER
@@ -71,9 +93,13 @@ elif data_source == "Connect SQL Database":
 
     if st.button("Connect & Load"):
         if db_type == "MySQL":
-            engine = create_engine(f"mysql+pymysql://{user}:{password}@{host}:{port}/{db}")
+            engine = create_engine(
+                f"mysql+pymysql://{user}:{password}@{host}:{port}/{db}"
+            )
         else:
-            engine = create_engine(f"postgresql://{user}:{password}@{host}:{port}/{db}")
+            engine = create_engine(
+                f"postgresql://{user}:{password}@{host}:{port}/{db}"
+            )
 
         df_raw = pd.read_sql(f"SELECT * FROM {table}", engine)
         st.success("Database connected successfully")
@@ -94,13 +120,12 @@ if df_raw is not None:
         # ---------------------------------------------
         # DROP TARGET COLUMN IF PRESENT
         # ---------------------------------------------
-        possible_targets = ["churn", "Churn", "Exited", "is_churn", "Churn_Risk"]
-        for col in possible_targets:
+        for col in ["churn", "Churn", "Exited", "is_churn", "Churn_Risk"]:
             if col in df.columns:
                 df.drop(columns=[col], inplace=True)
 
         # ---------------------------------------------
-        # TYPE FIXING (ML PIPELINE ONLY)
+        # TYPE FIXING
         # ---------------------------------------------
         for col in df.columns:
             if df[col].dtype == "object":
@@ -114,14 +139,7 @@ if df_raw is not None:
         cat_cols = df.select_dtypes(include=["object", "category"]).columns
         df = pd.get_dummies(df, columns=cat_cols, drop_first=True)
 
-        # ---------------------------------------------
-        # MISSING VALUES
-        # ---------------------------------------------
         df.fillna(0, inplace=True)
-
-        # ---------------------------------------------
-        # SCHEMA ALIGNMENT
-        # ---------------------------------------------
         df = df.reindex(columns=columns, fill_value=0)
 
         st.success("Enterprise-grade data validation completed")
@@ -134,20 +152,13 @@ if df_raw is not None:
         results = df_raw.copy()
         results["Churn_Probability"] = churn_prob
 
-        # =================================================
-        # RISK SEGMENTATION (FIXED ORDER)
-        # =================================================
         results["Churn_Risk"] = np.where(
             churn_prob >= 0.7, "High Risk",
             np.where(churn_prob >= 0.4, "Low Risk", "Safe")
         )
 
-        # =================================================
-        # 🔐 UI SAFETY FIX (CRITICAL)
-        # Convert ALL columns to string for Streamlit widgets
-        # =================================================
-        for col in results.columns:
-            results[col] = results[col].astype(str)
+        # UI SAFETY
+        results = results.astype(str)
 
         # =================================================
         # SUMMARY DASHBOARD
@@ -155,27 +166,22 @@ if df_raw is not None:
         st.subheader("📊 Executive Risk Summary")
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Customers", results.shape[0])
+        c1.metric("Total Customers", len(results))
         c2.metric("Safe", (results["Churn_Risk"] == "Safe").sum())
         c3.metric("Low Risk", (results["Churn_Risk"] == "Low Risk").sum())
         c4.metric("High Risk", (results["Churn_Risk"] == "High Risk").sum())
 
         # =================================================
-        # CUSTOMER SEARCH (FIXED)
+        # CUSTOMER SEARCH
         # =================================================
         st.subheader("🔎 Customer Risk Lookup")
 
-        id_col = st.selectbox(
-            "Select Customer Identifier",
-            options=[str(c) for c in results.columns]
-        )
-
+        id_col = st.selectbox("Select Customer Identifier", results.columns)
         search_val = st.text_input("Enter Customer ID").strip()
 
+        match = None
         if search_val:
-            match = results[
-                results[id_col].astype(str).str.strip() == search_val
-            ]
+            match = results[results[id_col].str.strip() == search_val]
 
             if match.empty:
                 st.warning("No customer found")
@@ -183,60 +189,97 @@ if df_raw is not None:
                 st.success("Customer located")
                 st.dataframe(match, use_container_width=True)
 
+                # =================================================
+                # GENAI CUSTOMER EXPLANATION
+                # =================================================
+                if genai_enabled:
+                    st.markdown("### 🧠 AI Customer Explanation")
+
+                    prompt = f"""
+                    Explain the churn risk for this customer in business terms.
+                    Customer data: {match.iloc[0].to_dict()}
+                    Include:
+                    - Why risky/safe
+                    - Business interpretation
+                    - Recommended action
+                    """
+
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.3
+                    )
+
+                    st.info(response.choices[0].message.content)
+
         # =================================================
-        # DOWNLOAD ACTION LISTS
+        # DOWNLOADS
         # =================================================
         st.subheader("📥 Actionable Lists")
 
-        high_df = results[results["Churn_Risk"] == "High Risk"]
-        low_df = results[results["Churn_Risk"] == "Low Risk"]
-        safe_df = results[results["Churn_Risk"] == "Safe"]
-
-        st.download_button("⬇ High Risk Customers", high_df.to_csv(index=False), "high_risk.csv")
-        st.download_button("⬇ Low Risk Customers", low_df.to_csv(index=False), "low_risk.csv")
-        st.download_button("⬇ Safe Customers", safe_df.to_csv(index=False), "safe.csv")
-        st.download_button("⬇ Full Results", results.to_csv(index=False), "full_predictions.csv")
+        st.download_button(
+            "⬇ Full Results",
+            results.to_csv(index=False),
+            "full_predictions.csv"
+        )
 
         # =================================================
-        # SHAP EXPLAINABILITY
+        # EXECUTIVE SUMMARY PDF
         # =================================================
-        st.subheader("🔍 Model Explainability (Regulatory Ready)")
+        if genai_enabled and st.button("📄 Generate Executive Summary PDF"):
+            pdf_path = "Executive_Summary.pdf"
+            doc = SimpleDocTemplate(pdf_path)
+            styles = getSampleStyleSheet()
 
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(df)
+            summary_prompt = f"""
+            Create an executive summary.
+            Total customers: {len(results)}
+            High Risk: {(results['Churn_Risk']=='High Risk').sum()}
+            Low Risk: {(results['Churn_Risk']=='Low Risk').sum()}
+            Safe: {(results['Churn_Risk']=='Safe').sum()}
+            """
 
-        if isinstance(shap_values, list):
-            shap_values = shap_values[1]
+            summary = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": summary_prompt}],
+                temperature=0.3
+            ).choices[0].message.content
 
-        fig, ax = plt.subplots(figsize=(10, 5))
-        shap.summary_plot(shap_values, df, show=False)
-        st.pyplot(fig)
+            doc.build([Paragraph(summary, styles["Normal"])])
+
+            with open(pdf_path, "rb") as f:
+                st.download_button(
+                    "⬇ Download Executive Summary",
+                    f,
+                    file_name="Executive_Summary.pdf"
+                )
 
         # =================================================
         # GENAI BI COPILOT
         # =================================================
         st.subheader("💬 GenAI BI Copilot")
 
-        openai.api_key = st.text_input("OpenAI API Key", type="password")
-
         question = st.text_input(
-            "Example: Which customer segment should we prioritize for retention?"
+            "Ask any business question about this dataset"
         )
 
-        if openai.api_key and question:
+        if genai_enabled and question:
             prompt = f"""
-            You are a senior banking BI analyst.
+            You are a senior enterprise BI analyst.
             Dataset columns: {list(results.columns)}
             Question: {question}
-            Provide SQL-style analytical guidance.
             """
 
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3
             )
 
-            st.info(response.choices[0].message.content)
+            st.success(response.choices[0].message.content)
+
+        elif question and not genai_enabled:
+            st.warning("Enter OpenAI API key to enable GenAI features")
 
     except Exception as e:
         st.error("Enterprise processing error")
