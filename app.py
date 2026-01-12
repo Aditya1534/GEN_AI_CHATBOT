@@ -129,10 +129,7 @@ elif data_source == "Connect SQL Database":
 
     db_type = st.selectbox("Database Type", ["MySQL", "PostgreSQL"])
     host = st.text_input("Host")
-    port = st.text_input(
-        "Port",
-        "3306" if db_type == "MySQL" else "5432"
-    )
+    port = st.text_input("Port", "3306" if db_type == "MySQL" else "5432")
     db = st.text_input("Database Name")
     user = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -142,10 +139,7 @@ elif data_source == "Connect SQL Database":
         engine = create_engine(
             f"{'mysql+pymysql' if db_type=='MySQL' else 'postgresql'}://{user}:{password}@{host}:{port}/{db}"
         )
-        df_raw = pd.read_sql(
-            f"SELECT * FROM {table}",
-            engine
-        )
+        df_raw = pd.read_sql(f"SELECT * FROM {table}", engine)
         st.success("Database connected successfully")
 
 # =================================================
@@ -199,32 +193,58 @@ if df_raw is not None:
         results = results.astype(str)
 
         # =================================================
+        # A/B TESTING – EXPERIMENT ASSIGNMENT
+        # =================================================
+        np.random.seed(42)
+
+        results["AB_Test_Group"] = np.random.choice(
+            ["Control", "Treatment_A", "Treatment_B"],
+            size=len(results),
+            p=[0.4, 0.3, 0.3]
+        )
+
+        results["Retention_Strategy"] = np.where(
+            results["AB_Test_Group"] == "Control", "No Action",
+            np.where(
+                results["AB_Test_Group"] == "Treatment_A",
+                "Discount / Offer",
+                "Personalized Outreach"
+            )
+        )
+
+        # =================================================
         # EXECUTIVE DASHBOARD
         # =================================================
         st.subheader("📊 Executive Risk Summary")
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Customers", len(results))
-        c2.metric("Safe", (results["Churn_Risk"]=="Safe").sum())
-        c3.metric("Low Risk", (results["Churn_Risk"]=="Low Risk").sum())
-        c4.metric("High Risk", (results["Churn_Risk"]=="High Risk").sum())
+        c2.metric("Safe", (results["Churn_Risk"] == "Safe").sum())
+        c3.metric("Low Risk", (results["Churn_Risk"] == "Low Risk").sum())
+        c4.metric("High Risk", (results["Churn_Risk"] == "High Risk").sum())
+
+        st.subheader("🧪 A/B Testing Experiment Overview")
+
+        ab1, ab2, ab3 = st.columns(3)
+        ab1.metric("Control Group", (results["AB_Test_Group"] == "Control").sum())
+        ab2.metric("Treatment A", (results["AB_Test_Group"] == "Treatment_A").sum())
+        ab3.metric("Treatment B", (results["AB_Test_Group"] == "Treatment_B").sum())
+
+        st.caption(
+            "⚠️ Customers are randomly assigned to experimental groups. "
+            "Actual churn reduction is measured over time."
+        )
 
         # =================================================
         # CUSTOMER SEARCH
         # =================================================
         st.subheader("🔎 Customer Risk Lookup")
 
-        id_col = st.selectbox(
-            "Select Customer Identifier",
-            results.columns
-        )
-
+        id_col = st.selectbox("Select Customer Identifier", results.columns)
         search_val = st.text_input("Enter Customer ID").strip()
 
         if search_val:
-            match = results[
-                results[id_col].str.strip() == search_val
-            ]
+            match = results[results[id_col].str.strip() == search_val]
 
             if match.empty:
                 st.warning("No customer found")
@@ -234,16 +254,23 @@ if df_raw is not None:
 
                 if genai_enabled:
                     st.markdown("### 🧠 AI Customer Explanation")
+
                     prompt = f"""
                     Explain the churn risk in business terms.
                     Customer data: {match.iloc[0].to_dict()}
-                    Include reason, impact and recommended action.
+
+                    Also explain:
+                    - Why this customer is placed in the assigned A/B test group
+                    - How the retention strategy helps measure business impact
+                    - What success metrics should be tracked
                     """
+
                     response = openai.ChatCompletion.create(
                         model="gpt-3.5-turbo",
-                        messages=[{"role":"user","content":prompt}],
+                        messages=[{"role": "user", "content": prompt}],
                         temperature=0.3
                     )
+
                     st.info(response.choices[0].message.content)
 
         # =================================================
@@ -251,30 +278,14 @@ if df_raw is not None:
         # =================================================
         st.subheader("📥 Actionable Lists")
 
-        safe_df = results[results["Churn_Risk"]=="Safe"]
-        low_df = results[results["Churn_Risk"]=="Low Risk"]
-        high_df = results[results["Churn_Risk"]=="High Risk"]
+        safe_df = results[results["Churn_Risk"] == "Safe"]
+        low_df = results[results["Churn_Risk"] == "Low Risk"]
+        high_df = results[results["Churn_Risk"] == "High Risk"]
 
-        st.download_button(
-            "⬇ Full Results",
-            results.to_csv(index=False),
-            "full_predictions.csv"
-        )
-        st.download_button(
-            "⬇ Safe Customers",
-            safe_df.to_csv(index=False),
-            "safe_customers.csv"
-        )
-        st.download_button(
-            "⬇ Low Risk Customers",
-            low_df.to_csv(index=False),
-            "low_risk_customers.csv"
-        )
-        st.download_button(
-            "⬇ High Risk Customers",
-            high_df.to_csv(index=False),
-            "high_risk_customers.csv"
-        )
+        st.download_button("⬇ Full Results", results.to_csv(index=False), "full_predictions.csv")
+        st.download_button("⬇ Safe Customers", safe_df.to_csv(index=False), "safe_customers.csv")
+        st.download_button("⬇ Low Risk Customers", low_df.to_csv(index=False), "low_risk_customers.csv")
+        st.download_button("⬇ High Risk Customers", high_df.to_csv(index=False), "high_risk_customers.csv")
 
         # =================================================
         # EXECUTIVE SUMMARY PDF
@@ -294,18 +305,14 @@ if df_raw is not None:
 
             summary = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role":"user","content":summary_prompt}],
+                messages=[{"role": "user", "content": summary_prompt}],
                 temperature=0.3
             ).choices[0].message.content
 
             doc.build([Paragraph(summary, styles["Normal"])])
 
             with open(pdf_path, "rb") as f:
-                st.download_button(
-                    "⬇ Download Executive Summary",
-                    f,
-                    file_name="Executive_Summary.pdf"
-                )
+                st.download_button("⬇ Download Executive Summary", f, file_name="Executive_Summary.pdf")
 
         # =================================================
         # SIDEBAR COPILOT RESPONSE
@@ -318,11 +325,13 @@ if df_raw is not None:
             Safe={len(safe_df)}, Low={len(low_df)}, High={len(high_df)}
             Question: {sidebar_question}
             """
+
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role":"user","content":prompt}],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.3
             )
+
             st.sidebar.success(response.choices[0].message.content)
 
     except Exception as e:
